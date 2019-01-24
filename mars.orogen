@@ -192,6 +192,8 @@ task_context "Joints" do
 	doc('Optional array of scale values that are applied to the mars joint values. Needs to be empty or the same size as names.')
     property('offset', 'std/vector<double>').
 	doc('Optional array of offset values that added to the scaled mars joint values. Needs to be empty or the same size as names.')
+    property('torque_control', 'bool', false).
+      doc('If true, torque control is enabled (and position ignored)')
     # optional configuration for the rigid_body_states
     # this module will generate on the
     property "joint_transform", "base/JointTransformVector"
@@ -503,5 +505,3 @@ task_context "AuvMotion" do
       doc("Buoyancy force applied to the vehicle")
 
 end
-
-

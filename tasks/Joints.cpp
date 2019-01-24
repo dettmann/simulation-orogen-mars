@@ -5,7 +5,7 @@
 #include <mars/sim/SimMotor.h>
 #include <mars/interfaces/sim/MotorManagerInterface.h>
 #include <mars/interfaces/sim/JointManagerInterface.h>
-#include <base/Logging.hpp>
+#include <base-logging/Logging.hpp>
 #include <base/samples/RigidBodyState.hpp>
 #include <mars/interfaces/sim/ControlCenter.h>
 
@@ -36,6 +36,12 @@ void Joints::init()
         if( marsMotorId ){
             mars_ids[i].mars_id = marsMotorId;
             joint_types.push_back(MOTOR);
+
+            if (_torque_control.get()) {
+                mars::sim::SimMotor *motor = control->motors->getSimMotor( marsMotorId );
+                motor->setType(mars::interfaces::MOTOR_TYPE_VELOCITY);
+            }
+
         }else{
             int marsJointId = control->joints->getID( name );
             if (marsJointId){
@@ -70,36 +76,55 @@ void Joints::update(double delta_t)
             if (it == cmd.names.end()){
                 continue;
             }
-            
+
             base::JointState &curCmd(cmd[*it]);
 
 	    mars::sim::SimMotor *motor = control->motors->getSimMotor( conv.mars_id );
 
-	    if( curCmd.hasPosition() )
+      if (!_torque_control.get())
+      {
+
+      if( curCmd.hasPosition() )
             {
                 //set maximum speed that is allowed for turning
 
                 if(curCmd.hasSpeed()){
                     switch (controlMode){
                     case IGNORE:break;
-                    case MAX_SPEED:motor->setMaximumVelocity(curCmd.speed);break;
+                    case MAX_SPEED:motor->setMaxSpeed(curCmd.speed);break;
                     //case SPEED_AT_POS: RTT::log(RTT::Error) << "SPEED_AT_POS" << RTT::endlog();break
                     }
 	            }
-                motor->setValue( conv.toMars( curCmd.position ) );
+                motor->setControlValue( conv.toMars( curCmd.position ) );
             }
             else
             {
                 if( curCmd.hasSpeed() )
                     motor->setVelocity(curCmd.speed / conv.scaling);
             }
-	    if( curCmd.hasEffort() )
-	    {
-		LOG_WARN_S << "Effort command ignored";
-	    }
+
+            if( curCmd.hasEffort() )
+            {
+                LOG_WARN_S << "Effort command ignored";
+            }
+
+    } else {
+      // torque control is realized via limiting maximum torque and setting a high speed reference
+      motor->setMaxEffort(curCmd.effort);
+      double threshold = 0.001;
+      if (curCmd.speed > threshold) {
+          motor->setControlValue(1000.0);
+      } else if (curCmd.speed < -threshold) {
+          motor->setControlValue(-1000.0);
+      } else {
+          motor->setControlValue(0.0);
+      }
+
+
+    }
 	    if( curCmd.hasRaw() )
 	    {
-		LOG_WARN_S << "Raw command ignored";
+               LOG_WARN_S << "Raw command ignored";
 	    }
 	}
     }
@@ -155,7 +180,7 @@ void Joints::update(double delta_t)
     currents.time = status.time;
     _current_values.write(currents);
 
-    // see if we have configuration for the joint_transforms 
+    // see if we have configuration for the joint_transforms
     // and the output port for it is connected
     std::vector<base::samples::RigidBodyState> rbs;
     if( !_joint_transform.value().empty() && _transforms.connected() )
@@ -190,7 +215,7 @@ bool Joints::configureHook()
 
 
     mars_ids.clear();
-    // fill the joint structure 
+    // fill the joint structure
     mars_ids.resize( num_joints );
     cmd.resize( num_joints);
     status.resize( num_joints - parallel_kinematics.size() );
@@ -239,7 +264,7 @@ bool Joints::configureHook()
     }
 
 
-    std::vector<std::string> rename = _name_remap.get(); 
+    std::vector<std::string> rename = _name_remap.get();
     for( size_t i=0; i<mars_ids.size(); i++ )
     {
 		if( !_scaling.value().empty() ){
