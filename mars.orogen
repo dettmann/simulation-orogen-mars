@@ -363,6 +363,8 @@ task_context "RobotTeleportation" do
 
     property("robot_name", "/std/string").
         doc("Name of the robot.")
+    property("reset_node_name", "/std/string").
+        doc("Name of the node that has to be resetted additionally.")
     property("position_mode", "/uint16_t", 1).
         doc("0 for manual: needs coordinates in world frame. 1 for configured: needs id of preconfigured coordinates.")
 
@@ -374,6 +376,8 @@ task_context "RobotTeleportation" do
         doc 'Puts the robot to the given preconfigured position.'
     input_port('anchor', '/bool', false).
         doc 'Fixes the robot at the given position.'
+    input_port('reset_node', '/bool', false).
+        doc 'Resets root and the given node (config).'
 	port_driven
 
     needs_configuration

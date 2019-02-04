@@ -8,7 +8,7 @@
 #include <mars/interfaces/sim/ControlCenter.h>
 #include <mars/sim/SimEntity.h>
 
-#include <base/Logging.hpp>
+#include <base-logging/Logging.hpp>
 
 namespace mars {
 
@@ -87,17 +87,13 @@ namespace mars {
       LOG_DEBUG_S << "EntityFakeDetection"<< "Running updateHook!";
 
       if (use_camera == true) { // then fill the buffer only with the entities seen by the camera
-        LOG_DEBUG_S << "0";
         camera->getEntitiesInView(visible_entities, minVisibleVertices);
-        LOG_DEBUG_S << "1";
         if (visible_entities.size()!=detectionArray->detections.size()) {
-          LOG_DEBUG_S << "2";
           delete detectionArray;
-          LOG_DEBUG_S << "3";
           detectionArray = new Detection3DArray(visible_entities.size());
-          LOG_DEBUG_S << "4";
         }
       } else {
+        visible_entities = *(control->entities->subscribeToEntityCreation(nullptr));
         frame_id = FrameId::GLOBAL;
         minVisibleVertices = 0;
       }
