@@ -28,6 +28,8 @@ Joints::~Joints()
 
 void Joints::init()
 {
+    use_torque_control = _torque_control.get();
+
     // for each of the names, get the mars motor id
     for( size_t i=0; i<mars_ids.size(); ++i )
     {
@@ -37,10 +39,8 @@ void Joints::init()
             mars_ids[i].mars_id = marsMotorId;
             joint_types.push_back(MOTOR);
 
-            if (_torque_control.get()) {
-                mars::sim::SimMotor *motor = control->motors->getSimMotor( marsMotorId );
-                motor->setType(mars::interfaces::MOTOR_TYPE_VELOCITY);
-            }
+            mars::sim::SimMotor *motor = control->motors->getSimMotor( marsMotorId );
+            motor_types.push_back(motor->getType());
 
         }else{
             int marsJointId = control->joints->getID( name );
@@ -61,15 +61,15 @@ void Joints::update(double delta_t)
     // if there was a command, write it to the mars
     while( _command.read( cmd ) == RTT::NewData )
     {
-	for( size_t i=0; i<mars_ids.size(); ++i )
-	{
-        //passive joints can't take commands
-	    if (joint_types [i] == PASSIVE){
-	        continue;
-	    }
+      	for( size_t i=0; i<mars_ids.size(); ++i )
+      	{
+              //passive joints can't take commands
+      	    if (joint_types [i] == PASSIVE){
+      	        continue;
+      	    }
 
-	    // for each command input look up the name in the mars_ids structure
-	    JointConversion conv = mars_ids[i];
+      	    // for each command input look up the name in the mars_ids structure
+      	    JointConversion conv = mars_ids[i];
 
             //ignore the case that the input data stream has not commands for our other joints
             std::vector<std::string>::const_iterator it = std::find(cmd.names.begin(), cmd.names.end(), conv.externalName);
@@ -79,55 +79,76 @@ void Joints::update(double delta_t)
 
             base::JointState &curCmd(cmd[*it]);
 
-	    mars::sim::SimMotor *motor = control->motors->getSimMotor( conv.mars_id );
+            mars::sim::SimMotor *motor = control->motors->getSimMotor( conv.mars_id );
 
-      if (!_torque_control.get())
-      {
-
-      if( curCmd.hasPosition() )
+            if ( motor_types[i] == mars::interfaces::MOTOR_TYPE_POSITION )
             {
-                //set maximum speed that is allowed for turning
 
-                if(curCmd.hasSpeed()){
-                    switch (controlMode){
-                    case IGNORE:break;
-                    case MAX_SPEED:motor->setMaxSpeed(curCmd.speed);break;
-                    //case SPEED_AT_POS: RTT::log(RTT::Error) << "SPEED_AT_POS" << RTT::endlog();break
+                if (!use_torque_control)
+                {
+                  //set maximum speed that is allowed for turning
+
+                    if(curCmd.hasSpeed())
+                    {
+                        switch (controlMode)
+                        {
+                            case IGNORE:break;
+                            case MAX_SPEED:motor->setMaxSpeed(curCmd.speed);break;
+                            //case SPEED_AT_POS: RTT::log(RTT::Error) << "SPEED_AT_POS" << RTT::endlog();break
+                        }
                     }
-	            }
-                motor->setControlValue( conv.toMars( curCmd.position ) );
+                    motor->setControlValue( conv.toMars( curCmd.position ) );
+                }
+                else
+                {
+                    // torque control is realized via limiting maximum torque and setting the position reference
+                    // an additional offset it written depending on position and velocity difference
+                    double p_ref = conv.toMars( curCmd.position );
+                    double p_offset = (p_ref - motor->getPosition()) * _posDiff2TorqueScale.get();
+                    double v_offset = 0.0;
+                    if(curCmd.hasSpeed())
+                    {
+                        v_offset = (curCmd.speed - motor->getVelocity()) * _velDiff2TorqueScale.get();;
+                    }
+                    fprintf(stderr, "reference %g p_offset %g vel_offset %g\n", fabs(curCmd.effort), p_offset, v_offset);
+
+                    motor->setMaxEffort(fabs(curCmd.effort) + p_offset + v_offset);
+                    motor->setControlValue( p_ref );
+                }
+            }
+            else if (motor_types[i] == mars::interfaces::MOTOR_TYPE_VELOCITY)
+            {
+                if (!use_torque_control)
+                {
+                    motor->setVelocity(curCmd.speed / conv.scaling);
+
+                    if( curCmd.hasEffort() )
+                    {
+                        LOG_WARN_S << "Effort command ignored";
+                    }
+                } else {
+                    // torque control is realized via limiting maximum torque and setting the veloicty reference
+                    // an additional offset it written depending on velocity difference
+                    double v_ref = curCmd.speed / conv.scaling;
+                    double v_offset = (v_ref - motor->getVelocity()) * _velDiff2TorqueScale.get();
+                    fprintf(stderr, "reference %g vel_offset %g\n", fabs(curCmd.effort), v_offset);
+
+                    motor->setMaxEffort(fabs(curCmd.effort) + v_offset);
+                    motor->setControlValue(v_ref);
+                }
             }
             else
             {
-                if( curCmd.hasSpeed() )
-                    motor->setVelocity(curCmd.speed / conv.scaling);
+                LOG_ERROR_S << "Motor type not supported for id " << i;
+                throw;
             }
 
-            if( curCmd.hasEffort() )
-            {
-                LOG_WARN_S << "Effort command ignored";
-            }
-
-    } else {
-      // torque control is realized via limiting maximum torque and setting a high speed reference
-      motor->setMaxEffort(curCmd.effort);
-      double threshold = 0.001;
-      if (curCmd.speed > threshold) {
-          motor->setControlValue(1000.0);
-      } else if (curCmd.speed < -threshold) {
-          motor->setControlValue(-1000.0);
-      } else {
-          motor->setControlValue(0.0);
-      }
-
-
-    }
-	    if( curCmd.hasRaw() )
-	    {
-               LOG_WARN_S << "Raw command ignored";
-	    }
-	}
-    }
+      	    if( curCmd.hasRaw() )
+      	    {
+                LOG_WARN_S << "Raw command ignored";
+      	    }
+	      }  // end loop through all joints
+    } // end of handling new data
 
     // in any case read out the status
     for( size_t i=0; i<mars_ids.size(); ++i )
@@ -153,17 +174,17 @@ void Joints::update(double delta_t)
         if (joint_types[i] == MOTOR){
             mars::sim::SimMotor *motor = control->motors->getSimMotor( conv->mars_id );
 
-            state.position = conv->fromMars(conv->updateAbsolutePosition( motor->getActualPosition() ));
+            state.position = conv->fromMars(conv->updateAbsolutePosition( motor->getPosition() ));
             state.speed = motor->getJoint()->getVelocity() * conv->scaling;
             state.effort = conv->fromMars( motor->getTorque() );
 
             currents[conv->externalName] = motor->getCurrent();
 
             status[conv->externalName] = state;
-        }else{
+        } else {
             mars::sim::SimJoint* joint = control->joints->getSimJoint( conv->mars_id );
 
-            state.position = conv->fromMars(conv->updateAbsolutePosition( joint->getActualAngle1() ));
+            state.position = conv->fromMars(conv->updateAbsolutePosition( joint->getPosition() ));
             state.speed = joint->getVelocity() * conv->scaling;
             state.effort = 0;
 
@@ -326,4 +347,12 @@ void Joints::stopHook()
 void Joints::cleanupHook()
 {
     JointsBase::cleanupHook();
+}
+bool JointsBase::setPosdiff2torquescale(double value)
+{
+  return true;
+}
+bool JointsBase::setVeldiff2torquescale(double value)
+{
+  return true;
 }
