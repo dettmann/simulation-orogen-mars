@@ -348,11 +348,11 @@ void Joints::cleanupHook()
 {
     JointsBase::cleanupHook();
 }
-bool JointsBase::setPosdiff2torquescale(double value)
+bool Joints::setPosdiff2torquescale(double value)
 {
-  return true;
+  return(mars::JointsBase::setPosdiff2torquescale(value));
 }
-bool JointsBase::setVeldiff2torquescale(double value)
+bool Joints::setVeldiff2torquescale(double value)
 {
-  return true;
-}
+  return(mars::JointsBase::setVeldiff2torquescale(value));
+ }
